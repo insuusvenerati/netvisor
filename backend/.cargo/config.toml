@@ -1,0 +1,23 @@
+# Cross-compilation configuration for ARM targets
+
+[target.armv7-unknown-linux-gnueabihf]
+# Use the arm-linux-gnueabihf linker for armv7l
+linker = "arm-linux-gnueabihf-gcc"
+ar = "arm-linux-gnueabihf-ar"
+rustflags = [
+    "-C", "link-arg=-march=armv7-a",
+    "-C", "link-arg=-mfpu=neon",
+    "-C", "link-arg=-mfloat-abi=hard",
+]
+
+[target.armv7-unknown-linux-gnueabihf.env]
+OPENSSL_LIB_DIR = "/usr/lib/arm-linux-gnueabihf"
+OPENSSL_INCLUDE_DIR = "/usr/include"
+
+# Reduce binary size and improve performance
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

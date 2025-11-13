@@ -1,0 +1,63 @@
+FROM --platform=$BUILDPLATFORM lukemathwalker/cargo-chef:latest-rust-1.90 AS chef
+WORKDIR /app
+
+FROM --platform=$BUILDPLATFORM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM --platform=$BUILDPLATFORM chef AS builder
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+# Set up target-specific variables
+RUN case "$TARGETPLATFORM" in \
+    "linux/arm/v7") echo "armv7-unknown-linux-gnueabihf" > /target.txt ;; \
+    "linux/arm64") echo "aarch64-unknown-linux-gnu" > /target.txt ;; \
+    "linux/amd64") echo "x86_64-unknown-linux-gnu" > /target.txt ;; \
+    *) echo "x86_64-unknown-linux-gnu" > /target.txt ;; \
+    esac
+
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies
+RUN RUST_TARGET=$(cat /target.txt) && \
+    cargo chef cook --release --recipe-path recipe.json --target $RUST_TARGET
+
+COPY . .
+# Build daemon binary in release mode
+RUN RUST_TARGET=$(cat /target.txt) && \
+    cargo build --release --bin daemon --target $RUST_TARGET
+
+FROM debian:bookworm-slim AS runtime
+
+ARG TARGETPLATFORM
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    iproute2 \
+    iputils-ping \
+    net-tools \
+    procps \
+    tcpdump \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up target-specific copy
+RUN case "$TARGETPLATFORM" in \
+    "linux/arm/v7") RUST_TARGET="armv7-unknown-linux-gnueabihf" ;; \
+    "linux/arm64") RUST_TARGET="aarch64-unknown-linux-gnu" ;; \
+    "linux/amd64") RUST_TARGET="x86_64-unknown-linux-gnu" ;; \
+    *) RUST_TARGET="x86_64-unknown-linux-gnu" ;; \
+    esac && \
+    echo $RUST_TARGET > /rust_target.txt
+
+# Copy release binary
+COPY --from=builder /app/target/*/release/daemon /usr/local/bin/netvisor-daemon
+RUN chmod +x /usr/local/bin/netvisor-daemon
+
+EXPOSE 60073
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:60073/api/health || exit 1
+
+CMD ["netvisor-daemon"]

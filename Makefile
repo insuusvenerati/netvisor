@@ -15,6 +15,16 @@ help:
 	@echo "  make dev-container-rebuild-clean  - Rebuild, clean, and start containerized dev environment"
 	@echo "  make dev-down       - Stop development containers"
 	@echo "  make build          - Build production Docker images (server + daemon)"
+	@echo ""
+	@echo "  ARMv7l Support (32-bit ARM):"
+	@echo "  make build-armv7l-server  - Build server binary for armv7l locally (requires cross-compilation setup)"
+	@echo "  make build-armv7l-daemon  - Build daemon binary for armv7l locally (requires cross-compilation setup)"
+	@echo "  make build-armv7l   - Build both server and daemon for armv7l"
+	@echo "  make build-armv7l-docker-local  - Build armv7l Docker images locally (requires docker buildx)"
+	@echo "  make build-armv7l-docker  - Build multi-arch Docker images and push to registry"
+	@echo "  make test-armv7l    - Verify armv7l binaries (shows binary info)"
+	@echo "  make install-dev-linux-armv7l  - Install armv7l cross-compilation dependencies"
+	@echo ""
 	@echo "  make test           - Run all tests"
 	@echo "  make lint           - Run all linters"
 	@echo "  make format         - Format all code"
@@ -76,6 +86,53 @@ build:
 	docker build -f backend/Dockerfile.daemon -t mayanayza/netvisor-daemon:latest ./backend
 	@echo "✓ Daemon image built: mayanayza/netvisor-daemon:latest"
 
+build-armv7l-docker:
+	@echo "Building multi-architecture Docker images using docker buildx..."
+	@echo "Checking if docker buildx is available..."
+	@docker buildx version > /dev/null || { \
+		echo "Docker buildx not found. Installing..."; \
+		docker buildx create --use || echo "Warning: Could not set up buildx. Install manually."; \
+	}
+	@echo ""
+	@echo "Building Server + UI for linux/amd64,linux/arm/v7,linux/arm64..."
+	docker buildx build -f backend/Dockerfile.multiarch \
+		--platform linux/amd64,linux/arm/v7,linux/arm64 \
+		-t mayanayza/netvisor-server:latest \
+		-t mayanayza/netvisor-server:armv7l \
+		--push .
+	@echo "✓ Multi-arch server image built and pushed"
+	@echo ""
+	@echo "Building Daemon for linux/amd64,linux/arm/v7,linux/arm64..."
+	docker buildx build -f backend/Dockerfile.daemon.multiarch \
+		--platform linux/amd64,linux/arm/v7,linux/arm64 \
+		-t mayanayza/netvisor-daemon:latest \
+		-t mayanayza/netvisor-daemon:armv7l \
+		--push ./backend
+	@echo "✓ Multi-arch daemon image built and pushed"
+	@echo ""
+	@echo "Note: Images were pushed to registry. For local testing, use --load with single platform"
+
+build-armv7l-docker-local:
+	@echo "Building local armv7l Docker images (requires docker buildx)..."
+	@docker buildx version > /dev/null || { \
+		echo "Docker buildx not found. Creating builder..."; \
+		docker buildx create --use; \
+	}
+	@echo ""
+	@echo "Building local Server image for armv7l..."
+	docker buildx build -f backend/Dockerfile.multiarch \
+		--platform linux/arm/v7 \
+		-t mayanayza/netvisor-server:armv7l-local \
+		--load .
+	@echo "✓ Local armv7l server image built"
+	@echo ""
+	@echo "Building local Daemon image for armv7l..."
+	docker buildx build -f backend/Dockerfile.daemon.multiarch \
+		--platform linux/arm/v7 \
+		-t mayanayza/netvisor-daemon:armv7l-local \
+		--load ./backend
+	@echo "✓ Local armv7l daemon image built"
+
 test:
 	make dev-down
 	rm -rf ./data/daemon_config/*
@@ -134,3 +191,47 @@ install-dev-linux:
 	pre-commit install --hook-type pre-push
 	@echo ""
 	@echo "Development dependencies installed!"
+
+install-dev-linux-armv7l:
+	@echo "Installing armv7l cross-compilation dependencies on Linux..."
+	@echo "Installing Rust toolchain with armv7l target..."
+	rustup install stable
+	rustup target add armv7-unknown-linux-gnueabihf aarch64-unknown-linux-gnu
+	rustup component add rustfmt clippy
+	@echo "Installing cross-compilation tools..."
+	@which arm-linux-gnueabihf-gcc > /dev/null || { \
+		echo "Installing ARM cross-compilation toolchain..."; \
+		sudo apt-get update && \
+		sudo apt-get install -y build-essential pkg-config libssl-dev \
+			gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf \
+			libc6-dev-armhf-cross linux-libc-dev-armhf-cross || \
+		echo "Warning: Could not install ARM toolchain. Install manually with: sudo apt install gcc-arm-linux-gnueabihf"; \
+	}
+	@echo "Installing Node.js dependencies..."
+	cd ui && npm install
+	@echo "armv7l cross-compilation setup complete!"
+	@echo "Run 'make build-armv7l-server' or 'make build-armv7l-daemon' to compile"
+
+build-armv7l-server:
+	@echo "Building Server for armv7l..."
+	cd backend && cargo build --release --bin server --target armv7-unknown-linux-gnueabihf
+	@echo "✓ Server built for armv7l: backend/target/armv7-unknown-linux-gnueabihf/release/server"
+
+build-armv7l-daemon:
+	@echo "Building Daemon for armv7l..."
+	cd backend && cargo build --release --bin daemon --target armv7-unknown-linux-gnueabihf
+	@echo "✓ Daemon built for armv7l: backend/target/armv7-unknown-linux-gnueabihf/release/daemon"
+
+build-armv7l-daemon-static:
+	@echo "Building Daemon for armv7l (static)..."
+	cd backend && RUSTFLAGS='-C target-feature=+crt-static' cargo build --release --bin daemon --target armv7-unknown-linux-gnueabihf
+	@echo "✓ Static daemon built for armv7l: backend/target/armv7-unknown-linux-gnueabihf/release/daemon"
+
+build-armv7l: build-armv7l-server build-armv7l-daemon
+	@echo "✓ All armv7l binaries built successfully"
+
+test-armv7l:
+	@echo "Note: Full armv7l tests require actual armv7l hardware or QEMU emulation"
+	@echo "Cross-compiled binaries can be tested with: file backend/target/armv7-unknown-linux-gnueabihf/release/server"
+	@file backend/target/armv7-unknown-linux-gnueabihf/release/server || echo "Server binary not yet built"
+	@file backend/target/armv7-unknown-linux-gnueabihf/release/daemon || echo "Daemon binary not yet built"

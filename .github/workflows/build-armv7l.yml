@@ -30,11 +30,20 @@ jobs:
 
       - name: Install ARM cross-compilation dependencies
         run: |
+          # Enable the armhf architecture and update package lists
+          sudo dpkg --add-architecture armhf
           sudo apt-get update
+          # Always install the cross-compiler and libc cross headers
           sudo apt-get install -y \
             gcc-arm-linux-gnueabihf \
-            libc6-dev-armhf-cross \
-            libssl-dev:armhf
+            libc6-dev-armhf-cross
+          # Try to install the armhf OpenSSL dev package if available; otherwise fall back
+          if apt-cache policy libssl-dev:armhf | grep -q 'Candidate:'; then
+            sudo apt-get install -y libssl-dev:armhf
+          else
+            echo "libssl-dev:armhf not available on this runner; installing host libssl-dev instead"
+            sudo apt-get install -y libssl-dev
+          fi
 
       - name: Cache cargo registry
         uses: actions/cache@v3

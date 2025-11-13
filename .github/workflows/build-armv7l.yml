@@ -65,7 +65,7 @@ jobs:
           ls -lh backend/target/armv7-unknown-linux-gnueabihf/release/${{ matrix.binary }}
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: netvisor-${{ matrix.binary }}-armv7l
           path: backend/target/armv7-unknown-linux-gnueabihf/release/${{ matrix.binary }}
